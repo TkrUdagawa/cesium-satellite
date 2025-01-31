@@ -29,6 +29,9 @@ const himawari_TLE = `1 41836U 16064A   25029.56736201 -.00000267  00000+0  0000
    2 41836   0.0188 199.9810 0001239 148.2969 125.8054  1.00267818 30160`;
 // Initialize the satellite record with this TLE
 
+// QPS-SAR-8 (AMATERU-IV)
+const qps8_TLE = `1 60542U 24149CC  25030.22755928  .00011154  00000+0  98646-3 0  9994
+            2 60542  97.7297 109.3402 0002930 340.0519  20.0588 14.96472627 24844`;
 const yam6_info = {
   tle: yam6_TLE,
   name: "yam-6",
@@ -46,7 +49,16 @@ const himawari_info = {
     color: Color.RED,
   },
 };
-const TLEs = [yam6_info, himawari_info];
+
+const qps8_info = {
+  tle: qps8_TLE,
+  name: "QPS-SAR-8 (AMATERU-IV) ",
+  point: {
+    pixelSize: 10,
+    color: Color.RED,
+  },
+};
+const TLEs = [himawari_info, yam6_info, qps8_info];
 
 // Initialize the Cesium Viewer in the HTML element with the `cesiumContainer` ID.
 const viewer = new Viewer("cesiumContainer", {
@@ -170,7 +182,27 @@ const linePositions = new CallbackProperty((time, result) => {
   if (checkLineSegmentIntersectsEarth(posA, posB)) {
     return [];
   }
+  // result が存在すれば再利用する (パフォーマンス最適化)
+  // 2点だけの配列を返すことで、衛星間を結ぶ直線が描画される
+  if (!result) {
+    result = [];
+  }
+  result[0] = posA;
+  result[1] = posB;
 
+  return result;
+}, false);
+
+const linePositions2 = new CallbackProperty((time, result) => {
+  const posA = entities[0].position.getValue(time);
+  const posB = entities[2].position.getValue(time);
+  // もし片方がまだ無効 (未計算や範囲外など) なら線を引かない
+  if (!posA || !posB) {
+    return []; // または null / undefined
+  }
+  if (checkLineSegmentIntersectsEarth(posA, posB)) {
+    return [];
+  }
   // result が存在すれば再利用する (パフォーマンス最適化)
   // 2点だけの配列を返すことで、衛星間を結ぶ直線が描画される
   if (!result) {
@@ -186,6 +218,16 @@ viewer.entities.add({
   name: "Line between Satellite A and B",
   polyline: {
     positions: linePositions,
+    width: 2,
+    material: Color.YELLOW,
+    arcType: ArcType.NONE,
+  },
+});
+
+viewer.entities.add({
+  name: "Line between Satellite A and B",
+  polyline: {
+    positions: linePositions2,
     width: 2,
     material: Color.YELLOW,
     arcType: ArcType.NONE,
