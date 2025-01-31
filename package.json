@@ -40,7 +40,8 @@
   },
   "dependencies": {
     "cesium": "^1.114.0",
-    "satellite.js": "^5.0.0"
+    "satellite.js": "^5.0.0",
+    "vite-plugin-env-compatible": "^2.0.1"
   },
   "lint-staged": {
     "*.{js,html}": [

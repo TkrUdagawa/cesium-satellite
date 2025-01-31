@@ -8,13 +8,19 @@ import {
   SampledPositionProperty,
   JulianDate,
   ClockRange,
+  CallbackProperty,
+  ArcType,
+  Ray,
+  IntersectionTests,
+  Ellipsoid,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
 import { propagate, gstime, eciToGeodetic, twoline2satrec } from "satellite.js"; // {propagate,gstime, eciToGeodetic} from 'satellite.js';
 import "./style.css";
 
-Ion.defaultAccessToken = "your token";
+/*globals process */
+Ion.defaultAccessToken = process.env.VITE_ION_TOKEN;
 
 const yam6_TLE = `1 59126U 24043AE  25029.29948926  .00017226  00000+0  68604-3 0  9997
      2 59126  97.4927 157.8990 0009969 213.8000 146.2603 15.25258982 50193`;
@@ -65,6 +71,42 @@ viewer.timeline.zoomTo(start, stop);
 viewer.clock.multiplier = 40;
 viewer.clock.clockRange = ClockRange.LOOP_STOP;
 
+/**
+ * @param {Cesium.Cartesian3} pointA - 衛星Aの位置(ECEF座標)
+ * @param {Cesium.Cartesian3} pointB - 衛星Bの位置(ECEF座標)
+ * @returns {boolean} - 地球(WGS84)と交差していればtrue
+ */
+function checkLineSegmentIntersectsEarth(pointA, pointB) {
+  // 1) A->B のベクトル
+  const direction = Cartesian3.subtract(pointB, pointA, new Cartesian3());
+  const segmentLength = Cartesian3.magnitude(direction);
+
+  // 2) レイ (Ray) を作成: origin=A, direction=正規化ベクトル
+  const normalizedDir = Cartesian3.normalize(direction, new Cartesian3());
+  const ray = new Ray(pointA, normalizedDir);
+
+  // 3) 楕円体との交差判定
+  //    成功すると { start: Number, stop: Number } が返る (Rayと楕円体との交差パラメータ)
+  //    交差しない場合は undefined が返る
+  const intersection = IntersectionTests.rayEllipsoid(ray, Ellipsoid.WGS84);
+  if (!intersection) {
+    // 交差しない => 地球を貫いていない
+    return false;
+  }
+
+  // 4) intersection.start, intersection.stop はRay上のパラメータt(射影距離)
+  //    これが線分の範囲 [0, segmentLength] 内にあれば交差
+  const nearT = intersection.start;
+  const farT = intersection.stop;
+
+  // nearT or farT のどちらかが 0 <= t <= segmentLength なら、線分が地球と交わる
+  const intersects =
+    (nearT >= 0 && nearT <= segmentLength) ||
+    (farT >= 0 && farT <= segmentLength);
+
+  return intersects;
+}
+
 const getPosition = (tle, dateJS) => {
   const satrec = twoline2satrec(
     tle.split("\n")[0].trim(),
@@ -98,14 +140,14 @@ const createPositionOverTimeSample = (
   return positionProperty;
 };
 
-TLEs.map((satInfo) => {
+const entities = TLEs.map((satInfo) => {
   const positionProperty = createPositionOverTimeSample(
     start,
     timeStepInSeconds,
     steps,
     satInfo.tle,
   );
-  viewer.entities.add({
+  return viewer.entities.add({
     name: satInfo.name,
     position: positionProperty,
     point: satInfo.point,
@@ -116,4 +158,36 @@ TLEs.map((satInfo) => {
       material: Color.RED,
     },
   });
+});
+
+const linePositions = new CallbackProperty((time, result) => {
+  const posA = entities[0].position.getValue(time);
+  const posB = entities[1].position.getValue(time);
+  // もし片方がまだ無効 (未計算や範囲外など) なら線を引かない
+  if (!posA || !posB) {
+    return []; // または null / undefined
+  }
+  if (checkLineSegmentIntersectsEarth(posA, posB)) {
+    return [];
+  }
+
+  // result が存在すれば再利用する (パフォーマンス最適化)
+  // 2点だけの配列を返すことで、衛星間を結ぶ直線が描画される
+  if (!result) {
+    result = [];
+  }
+  result[0] = posA;
+  result[1] = posB;
+
+  return result;
+}, false);
+
+viewer.entities.add({
+  name: "Line between Satellite A and B",
+  polyline: {
+    positions: linePositions,
+    width: 2,
+    material: Color.YELLOW,
+    arcType: ArcType.NONE,
+  },
 });
